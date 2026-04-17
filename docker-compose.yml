@@ -1,0 +1,67 @@
+services:
+  # ── Kairon FastAPI backend ──────────────────────────────────────────────
+  kairon-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: kairon-api
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./storage:/app/storage          # flat-file persistence
+    environment:
+      - NEWSAPI_KEY=${NEWSAPI_KEY}
+      - GNEWS_KEY=${GNEWS_KEY}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - BOT_WEBHOOK_URL=${BOT_WEBHOOK_URL}
+      - BOT_WEBHOOK_SECRET=${BOT_WEBHOOK_SECRET}
+      - NIM_API_KEY=${NIM_API_KEY}
+      - NIM_BASE_URL=${NIM_BASE_URL}
+      - NIM_MODEL=${NIM_MODEL}
+      - NIM_MAX_TOKENS=${NIM_MAX_TOKENS}
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434   # Ollama runs on host
+      - OLLAMA_MODEL=${OLLAMA_MODEL}
+      - N8N_TRIGGER_SECRET=${N8N_TRIGGER_SECRET}
+      - MAX_CONCURRENT_LLM=${MAX_CONCURRENT_LLM:-2}
+      - RELEVANCE_THRESHOLD=${RELEVANCE_THRESHOLD:-0.4}
+      - STORAGE_DIR=/app/storage
+    networks:
+      - kairon-net
+    # Ollama runs on the host (not in Docker) so we use host.docker.internal.
+    # On Linux, add: extra_hosts: ["host.docker.internal:host-gateway"]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  # ── n8n workflow orchestrator ───────────────────────────────────────────
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: kairon-n8n
+    restart: unless-stopped
+    ports:
+      - "5678:5678"
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./n8n:/home/node/.n8n/workflows:ro   # auto-import workflow.json on start
+    environment:
+      # Disable basic auth for portfolio/demo mode
+      # For production, enable: N8N_BASIC_AUTH_ACTIVE=true
+      - N8N_BASIC_AUTH_ACTIVE=false
+      - N8N_BASIC_AUTH_USER=${N8N_BASIC_AUTH_USER:-admin}
+      - N8N_BASIC_AUTH_PASSWORD=${N8N_BASIC_AUTH_PASSWORD:-changeme}
+      - WEBHOOK_URL=${BOT_WEBHOOK_URL:-http://localhost:5678}
+      # Expose Kairon API URL and secret as n8n env vars
+      # These are referenced in the workflow as $env.KAIRON_API_URL etc.
+      - KAIRON_API_URL=http://kairon-api:8000
+      - N8N_TRIGGER_SECRET=${N8N_TRIGGER_SECRET}
+    networks:
+      - kairon-net
+    depends_on:
+      - kairon-api
+
+volumes:
+  n8n_data:
+
+networks:
+  kairon-net:
+    driver: bridge

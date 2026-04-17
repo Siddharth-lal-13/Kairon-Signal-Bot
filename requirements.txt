@@ -1,0 +1,40 @@
+# Kairon dependencies
+# Pin majors; let minor/patch float for security patches.
+
+# HTTP
+httpx>=0.27,<1.0
+
+# LangChain LCEL + Ollama
+langchain-core>=0.3,<1.0
+langchain-ollama>=0.2,<1.0
+
+# LangGraph supervisor pattern
+langgraph>=0.2,<1.0
+
+# Web scraping
+crawl4ai>=0.4,<1.0
+
+# OpenAI-compatible client (NVIDIA NIM)
+openai>=1.30,<2.0
+
+# Telegram bot
+python-telegram-bot>=21.0,<22.0
+
+# FastAPI + server
+fastapi>=0.111,<1.0
+uvicorn[standard]>=0.30,<1.0
+
+# Data models
+pydantic>=2.7,<3.0
+pydantic-settings>=2.3,<3.0
+
+# Flat-file storage
+filelock>=3.14,<4.0
+
+# Env
+python-dotenv>=1.0,<2.0
+
+# Stage 2 — MemPalace integration
+mempalace>=3.1,<4.0
+chromadb>=0.5,<1.0
+psycopg2-binary>=2.9,<3.0   # PostgreSQL
