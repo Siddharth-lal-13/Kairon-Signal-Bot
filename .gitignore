@@ -26,7 +26,13 @@ storage/*.lock
 
 
 # agentic files
-agents/
+# Core agent logic (proprietary)
+agents/fetcher.py
+agents/scraper.py
+agents/analyzer.py
+agents/synthesizer.py
+agents/pipeline.py
+agents/analyzer_local_model_backup.py
 
 # IDE
 .idea/
