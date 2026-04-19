@@ -205,11 +205,13 @@ kairon/
 ## Screenshots
 
 ![n8n_workflow](./assets/n8n_workflow.png)
-![kairon_chat_1](./assets/kairon_chat_1.jpeg)
-![kairon_chat_2](./assets/kairon_chat_2.jpeg)
-![kairon_chat_3](./assets/kairon_chat_3.jpeg)
-![kairon_chat_4](./assets/kairon_chat_4.jpeg)
-![kairon_chat_5](./assets/kairon_chat_5.jpeg)
+<p align="center">
+  <img src="./assets/kairon_chat_1.jpeg" alt="Kairon Chat Setup" width="250">
+  <img src="./assets/kairon_chat_2.jpeg" alt="Kairon Topics" width="250">
+  <img src="./assets/kairon_chat_3.jpeg" alt="Kairon Briefing Delivery" width="250">
+  <img src="./assets/kairon_chat_4.jpeg" alt="Kairon Inline Feedback" width="250">
+  <img src="./assets/kairon_chat_5.jpeg" alt="Kairon Status" width="250">
+</p>
 
 ---
 
