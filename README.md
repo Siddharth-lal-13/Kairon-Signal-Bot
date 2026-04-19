@@ -2,6 +2,14 @@
 
 **AI-powered signal briefing bot delivered via Telegram.**
 
+<p align="left">
+  <img src="https://img.shields.io/badge/Python-3.11+-blue.svg?style=flat-square&logo=python&logoColor=white" alt="Python">
+  <img src="https://img.shields.io/badge/FastAPI-009688?style=flat-square&logo=fastapi&logoColor=white" alt="FastAPI">
+  <img src="https://img.shields.io/badge/Docker-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Docker">
+  <img src="https://img.shields.io/badge/LangGraph-FF9900?style=flat-square&logo=langchain&logoColor=white" alt="LangGraph">
+  <img src="https://img.shields.io/badge/Ollama-FFFFFF?style=flat-square&logo=ollama&logoColor=black" alt="Ollama">
+</p>
+
 Kairon fetches articles from multiple free news APIs, runs a LangGraph-orchestrated pipeline to extract signal intelligence, synthesizes a daily briefing using a cloud LLM, and delivers it to your Telegram on a 12-hour schedule.
 
 > Built by [Siddharth Lal](https://linkedin.com/in/siddharth-lal-606128200)
