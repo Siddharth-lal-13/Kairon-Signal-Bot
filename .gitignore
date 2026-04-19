@@ -14,12 +14,19 @@ build/
 .venv/
 venv/
 env/
+drafts/
+claude/
+.claude/
 
 # Storage (flat-file data — don't commit real user data)
 storage/preferences.json
 storage/delivery_log.json
 storage/feedback_log.json
 storage/*.lock
+
+
+# agentic files
+agents/
 
 # IDE
 .idea/

@@ -43,11 +43,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from typing import Annotated, Literal
+from typing import Literal
 
 from dotenv import load_dotenv
 from langgraph.graph import StateGraph, END
-from langgraph.graph.message import add_messages
 from typing_extensions import TypedDict
 
 from agents.analyzer import analyze_articles
@@ -88,6 +87,9 @@ async def fetch_node(state: PipelineState) -> PipelineState:
     (Hacker News + Ars Technica) concurrently, merge results.
 
     Uses asyncio.gather for concurrent execution of all 4 sources.
+
+    Note: State mutations in edge functions don't persist, so retry_count must be
+    incremented in nodes themselves. We increment at the end of this node.
     """
     logger.info(
         "Fetch node: fetching articles for user %d (topics: %s), retry %d",
@@ -97,16 +99,23 @@ async def fetch_node(state: PipelineState) -> PipelineState:
     )
 
     try:
-        # Run fetchers and scrapers concurrently (re-enabled for debugging)
+        logger.info("Fetch node: Starting concurrent fetch and scrape operations...")
+
+        # Run fetchers and scrapers concurrently with user-specific topics
         tasks = [
-            fetch_articles(state["topics"]),
+            fetch_articles(topics=state["topics"], user_id=state["user_id"]),  # User-specific topic fetching
             scrape_articles(state["topics"]),
         ]
+
+        logger.info("Fetch node: Launching %d concurrent tasks (fetch_articles, scrape_articles)...", len(tasks))
         results = await asyncio.gather(*tasks, return_exceptions=True)
+        logger.info("Fetch node: All concurrent tasks completed")
 
         # Combine results, handling failures gracefully
         all_articles: list[RawArticle] = []
-        for result in results:
+        for i, result in enumerate(results):
+            logger.info("Fetch node: Processing result %d/%d...", i + 1, len(results))
+
             if isinstance(result, Exception):
                 logger.error("Article source failed in fetch_node: %s", result)
                 continue
@@ -117,6 +126,8 @@ async def fetch_node(state: PipelineState) -> PipelineState:
             if not isinstance(result, list):
                 logger.error("Source returned non-iterable: %s (type: %s)", result, type(result))
                 continue
+
+            logger.info("Fetch node: Extending all_articles with %d items from source %d", len(result), i + 1)
             all_articles.extend(result)
 
         # Deduplicate by URL (keep first occurrence)
@@ -130,6 +141,7 @@ async def fetch_node(state: PipelineState) -> PipelineState:
 
         # Update state
         state["raw_articles"] = deduped
+        state["retry_count"] += 1  # Increment retry count for this fetch attempt
         logger.info(
             "Fetch node: %d articles collected (retry %d)",
             len(deduped),
@@ -146,7 +158,7 @@ async def fetch_node(state: PipelineState) -> PipelineState:
 
 async def analyze_node(state: PipelineState) -> PipelineState:
     """
-    Analyze raw articles using LangChain LCEL chain with Ollama.
+    Analyze raw articles using LangChain LCEL chain with OpenRouter.
 
     Calculates coverage_score as (len(analyzed) / max(len(raw), 1))
     which represents the analyzer's independent decision point about data quality.
@@ -159,8 +171,20 @@ async def analyze_node(state: PipelineState) -> PipelineState:
     )
 
     try:
-        # Analyze articles using existing analyzer agent
-        analyzed = await analyze_articles(state["raw_articles"])
+        # Process all articles (removed VRAM limitations - using OpenRouter cloud models)
+        articles_to_analyze = state["raw_articles"]
+
+        # Optional: Limit to top 20 most recent articles for balanced briefing performance
+        if len(articles_to_analyze) > 20:
+            logger.info("Analyze node: Limiting to top 20 most recent articles from %d total for balanced briefing", len(articles_to_analyze))
+            articles_to_analyze = articles_to_analyze[:20]
+
+        logger.info("Analyze node: Starting LLM analysis of %d articles...", len(articles_to_analyze))
+
+        # Analyze articles using OpenRouter-powered analyzer agent
+        analyzed = await analyze_articles(articles_to_analyze)
+
+        logger.info("Analyze node: LLM analysis completed. %d articles processed", len(analyzed))
 
         # Calculate coverage score (analyzer's independent decision point)
         raw_count = len(state["raw_articles"])
@@ -169,6 +193,7 @@ async def analyze_node(state: PipelineState) -> PipelineState:
         # Update state
         state["analyzed_articles"] = analyzed
         state["coverage_score"] = coverage
+        state["retry_count"] += 1  # Increment retry count for this analyze attempt
 
         logger.info(
             "Analyze node: %d/%d articles passed relevance (coverage: %.2f, retry %d)",
@@ -206,16 +231,24 @@ async def synthesize_node(state: PipelineState) -> PipelineState:
             state["error"] = "No articles passed analysis threshold"
             return state
 
+        logger.info("Synthesize node: Getting user feedback summary for personalization...")
         # Get user feedback summary for personalization
         feedback = get_user_feedback_summary(state["user_id"])
+        logger.info("Synthesize node: User feedback summary obtained")
+
+        logger.info("Synthesize node: Starting synthesis of %d articles with NIM API...", len(state["analyzed_articles"]))
 
         # Synthesize briefing using existing synthesizer agent
-        briefing = synthesize_briefing(
+        # Use asyncio.to_thread to avoid blocking the event loop (synthesize_briefing is synchronous)
+        briefing = await asyncio.to_thread(
+            synthesize_briefing,
             user_id=state["user_id"],
             topics=state["topics"],
             articles=state["analyzed_articles"],
             feedback_summary=feedback,
         )
+
+        logger.info("Synthesize node: NIM API synthesis completed")
 
         # Store briefing memory (Stage 1 stub)
         store_briefing_memory(briefing)
@@ -247,21 +280,23 @@ def should_retry_fetch(state: PipelineState) -> Literal["fetch", "analyze"]:
     """
     Supervisor decision after fetch_node:
 
-    If len(raw_articles) < 5 AND retry_count < 2,
-    increment retry_count and loop back to fetch_node.
+    If len(raw_articles) < 5 AND retry_count <= 2,
+    loop back to fetch_node (retry_count is incremented in fetch_node).
     Otherwise proceed to analyze_node.
+
+    Note: State mutations in edge functions are NOT persisted in LangGraph.
+    Only mutations from nodes are committed. This is a pure routing function.
     """
     if state["error"]:
         # If there's an error, proceed to next node (don't retry)
         return "analyze"
 
-    if len(state["raw_articles"]) < 5 and state["retry_count"] < 2:
+    if len(state["raw_articles"]) < 5 and state["retry_count"] <= 2:
         logger.info(
             "Supervisor: low article count (%d), retrying fetch (attempt %d)",
             len(state["raw_articles"]),
             state["retry_count"] + 1,
         )
-        state["retry_count"] += 1
         return "fetch"
 
     return "analyze"
@@ -271,21 +306,23 @@ def should_retry_analyze(state: PipelineState) -> Literal["fetch", "synthesize"]
     """
     Supervisor decision after analyze_node:
 
-    If coverage_score < 0.3 AND retry_count < 2,
-    increment retry_count and loop back to fetch_node for more data.
+    If coverage_score < 0.3 AND retry_count <= 2,
+    loop back to fetch_node for more data (retry_count is incremented in fetch_node).
     Otherwise proceed to synthesize_node.
+
+    Note: State mutations in edge functions are NOT persisted in LangGraph.
+    Only mutations from nodes are committed. This is a pure routing function.
     """
     if state["error"]:
-        # If there's an error, proceed to end
-        return END
+        # If there's an error, proceed to synthesize (let synthesize_node handle error gracefully)
+        return "synthesize"
 
-    if state["coverage_score"] < 0.3 and state["retry_count"] < 2:
+    if state["coverage_score"] < 0.3 and state["retry_count"] <= 2:
         logger.info(
             "Supervisor: low coverage score (%.2f), retrying fetch (attempt %d)",
             state["coverage_score"],
             state["retry_count"] + 1,
         )
-        state["retry_count"] += 1
         return "fetch"
 
     return "synthesize"
@@ -342,6 +379,10 @@ async def run_pipeline(user_id: int, topics: list[Topic]) -> tuple[Briefing, lis
     Raises:
         RuntimeError: If pipeline fails and no briefing can be generated.
     """
+    logger.info("=" * 80)
+    logger.info("PIPELINE START: User %d, Topics: %s", user_id, [t.value for t in topics])
+    logger.info("=" * 80)
+
     # Initialize state
     initial_state: PipelineState = {
         "user_id": user_id,
@@ -354,8 +395,12 @@ async def run_pipeline(user_id: int, topics: list[Topic]) -> tuple[Briefing, lis
         "error": None,
     }
 
+    logger.info("INITIAL STATE: Created with retry_count=0, error=None")
+
     # Build and run graph
+    logger.info("BUILDING GRAPH: Creating LangGraph pipeline...")
     graph = build_pipeline()
+    logger.info("GRAPH BUILT: Ready to execute")
 
     logger.info(
         "Starting LangGraph pipeline for user %d (topics: %s)",
@@ -365,14 +410,18 @@ async def run_pipeline(user_id: int, topics: list[Topic]) -> tuple[Briefing, lis
 
     try:
         # Run the graph
+        logger.info("EXECUTING GRAPH: Invoking LangGraph...")
         final_state = await graph.ainvoke(initial_state)
+        logger.info("GRAPH EXECUTION COMPLETED: Final state received")
 
         # Check for errors
         if final_state["error"]:
+            logger.error("PIPELINE ERROR: %s", final_state["error"])
             raise RuntimeError(f"Pipeline failed: {final_state['error']}")
 
         # Check for successful briefing
         if not final_state["briefing"]:
+            logger.error("PIPELINE ERROR: No briefing generated despite no error state")
             raise RuntimeError("Pipeline completed but no briefing was generated")
 
         briefing = final_state["briefing"]

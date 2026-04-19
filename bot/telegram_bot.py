@@ -64,21 +64,21 @@ MAX_RECENT_ARTICLES = 200
 VALID_TOPICS = {t.value: t for t in Topic}
 
 HELP_TEXT = (
-    "*Kairon — AI Signal Briefing Bot*\n\n"
+    "<b>Kairon — AI Signal Briefing Bot</b>\n\n"
     "Commands:\n"
     "/start — Register and get started\n"
     "/topics — Show your current topic subscriptions\n"
-    "/set ai automation startups tech — Update topics \\(space\\-separated\\)\n"
+    "/set ai automation startups tech — Update topics (space-separated)\n"
     "/status — Your full preference summary\n"
     "/help — This message\n\n"
-    "Available topics: `ai` `automation` `startups` `tech`"
+    "Available topics: <code>ai</code> <code>automation</code> <code>startups</code> <code>tech</code>"
 )
 
 
 def _format_prefs(prefs: UserPreferences) -> str:
-    topics_str = " ".join(f"`{t.value}`" for t in prefs.topics)
+    topics_str = " ".join(f"<code>{t.value}</code>" for t in prefs.topics)
     return (
-        f"*Your Kairon Preferences*\n\n"
+        f"<b>Your Kairon Preferences</b>\n\n"
         f"Topics: {topics_str}\n"
         f"Delivery: {prefs.delivery_hour_utc:02d}:00 UTC\n"
         f"Active: {'✅' if prefs.active else '❌'}"
@@ -106,18 +106,18 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         )
         save_preferences(prefs)
         welcome = (
-            f"*Welcome to Kairon\\!* 🤖\n\n"
-            f"You're subscribed to: `ai` `tech`\n\n"
-            f"Use /set to change topics, /help for all commands\\.\n"
-            f"Your first briefing arrives at 07:00 UTC\\."
+            f"<b>Welcome to Kairon!</b> 🤖\n\n"
+            f"You're subscribed to: <code>ai</code> <code>tech</code>\n\n"
+            f"Use /set to change topics, /help for all commands.\n"
+            f"Your first briefing arrives at 07:00 UTC."
         )
     else:
         welcome = (
-            f"*Welcome back\\!* 🤖\n\n"
-            f"Your preferences are saved\\. Use /status to see them\\."
+            f"<b>Welcome back!</b> 🤖\n\n"
+            f"Your preferences are saved. Use /status to see them."
         )
 
-    await update.message.reply_text(welcome, parse_mode=ParseMode.MARKDOWN_V2)
+    await update.message.reply_text(welcome, parse_mode=ParseMode.HTML)
 
 
 async def cmd_topics(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -126,15 +126,14 @@ async def cmd_topics(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
     if prefs is None:
         await update.message.reply_text(
-            "You're not registered yet\\. Send /start to get started\\.",
-            parse_mode=ParseMode.MARKDOWN_V2,
+            "You're not registered yet. Send /start to get started.",
         )
         return
 
-    topics_str = " ".join(f"`{t.value}`" for t in prefs.topics)
+    topics_str = " ".join(f"<code>{t.value}</code>" for t in prefs.topics)
     await update.message.reply_text(
-        f"*Your topics:* {topics_str}\n\nUse /set to change them\\.",
-        parse_mode=ParseMode.MARKDOWN_V2,
+        f"<b>Your topics:</b> {topics_str}\n\nUse /set to change them.",
+        parse_mode=ParseMode.HTML,
     )
 
 
@@ -144,9 +143,9 @@ async def cmd_set(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     if not args:
         await update.message.reply_text(
-            "Usage: `/set ai automation startups tech`\n"
-            "Available: `ai` `automation` `startups` `tech`",
-            parse_mode=ParseMode.MARKDOWN_V2,
+            "Usage: /set ai automation startups tech\n"
+            "Available: <code>ai</code> <code>automation</code> <code>startups</code> <code>tech</code>",
+            parse_mode=ParseMode.HTML,
         )
         return
 
@@ -162,18 +161,17 @@ async def cmd_set(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             invalid.append(word)
 
     if invalid:
-        bad = ", ".join(f"`{w}`" for w in invalid)
+        bad = ", ".join(f"<code>{w}</code>" for w in invalid)
         await update.message.reply_text(
-            f"Unknown topic\\(s\\): {bad}\n"
-            f"Available: `ai` `automation` `startups` `tech`",
-            parse_mode=ParseMode.MARKDOWN_V2,
+            f"Unknown topic(s): {bad}\n"
+            f"Available: <code>ai</code> <code>automation</code> <code>startups</code> <code>tech</code>",
+            parse_mode=ParseMode.HTML,
         )
         return
 
     if not new_topics:
         await update.message.reply_text(
-            "Please specify at least one valid topic\\.",
-            parse_mode=ParseMode.MARKDOWN_V2,
+            "Please specify at least one valid topic.",
         )
         return
 
@@ -181,10 +179,10 @@ async def cmd_set(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     prefs.topics = new_topics
     save_preferences(prefs)
 
-    topics_str = " ".join(f"`{t.value}`" for t in new_topics)
+    topics_str = " ".join(f"<code>{t.value}</code>" for t in new_topics)
     await update.message.reply_text(
         f"✅ Topics updated to: {topics_str}",
-        parse_mode=ParseMode.MARKDOWN_V2,
+        parse_mode=ParseMode.HTML,
     )
 
 
@@ -194,19 +192,18 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
     if prefs is None:
         await update.message.reply_text(
-            "You're not registered yet\\. Send /start to get started\\.",
-            parse_mode=ParseMode.MARKDOWN_V2,
+            "You're not registered yet. Send /start to get started.",
         )
         return
 
     await update.message.reply_text(
         _format_prefs(prefs),
-        parse_mode=ParseMode.MARKDOWN_V2,
+        parse_mode=ParseMode.HTML,
     )
 
 
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text(HELP_TEXT, parse_mode=ParseMode.MARKDOWN_V2)
+    await update.message.reply_text(HELP_TEXT, parse_mode=ParseMode.HTML)
 
 
 # ---------------------------------------------------------------------------
@@ -262,40 +259,66 @@ def format_briefing_with_buttons(briefing_text: str, analyzed_articles: list[Ana
         for oid in oldest_ids:
             del RECENT_ARTICLES[oid]
 
-    # Split briefing by topic sections
-    topic_sections = {
-        Topic.AI: r"\*AI\*",
-        Topic.AUTOMATION: r"\*AUTOMATION\*",
-        Topic.STARTUPS: r"\*STARTUPS\*",
-        Topic.TECH: r"\*TECH\*",
-    }
+    # Define topic patterns in order
+    topic_patterns = [
+        (Topic.AI, r"<b>AI</b>"),
+        (Topic.AUTOMATION, r"<b>AUTOMATION</b>"),
+        (Topic.STARTUPS, r"<b>STARTUPS</b>"),
+        (Topic.TECH, r"<b>TECH</b>"),
+    ]
+
+    import re
+
+    # Find all topic headers and their positions
+    matches = []
+    for topic, pattern in topic_patterns:
+        for match in re.finditer(pattern, briefing_text):
+            matches.append({
+                'topic': topic,
+                'pattern': pattern,
+                'start': match.start(),
+                'end': match.end()
+            })
+
+    # Sort matches by position
+    matches.sort(key=lambda x: x['start'])
+
+    if not matches:
+        # No topic headers found, return full briefing
+        return [{"text": briefing_text, "keyboard": None}]
 
     messages = []
-    for topic, pattern in topic_sections.items():
-        import re
-        # Split briefing by topic section headers
-        sections = re.split(pattern, briefing_text)
-        if len(sections) > 1:
-            # Extract text for this topic (first non-empty section after header)
-            section_text = sections[1].strip()
-            if section_text:
-                # Find first article in this topic from analyzed_articles
-                topic_articles = [a for a in analyzed_articles if any(t in [topic.value] for t in a.topics)]
-                if topic_articles:
-                    first_article = topic_articles[0]
-                    # Attach keyboard to this section's first article
-                    keyboard = build_feedback_keyboard(first_article.article_id, topic.value)
-                    messages.append({"text": sections[0] + section_text, "keyboard": keyboard})
-                else:
-                    # No articles for this topic, no keyboard
-                    messages.append({"text": sections[0] + section_text, "keyboard": None})
+    current_pos = 0
 
-    # Handle the final "Takeaway" section (no keyboard)
-    remaining_text = sections[-1].strip() if sections else ""
-    if remaining_text:
-        messages.append({"text": remaining_text, "keyboard": None})
+    # Process each section
+    for i, match in enumerate(matches):
+        # Add content before this header (intro/previous sections)
+        if match['start'] > current_pos:
+            intro_text = briefing_text[current_pos:match['start']].strip()
+            if intro_text:
+                # Only add intro text for the first match
+                if i == 0:
+                    messages.append({"text": intro_text, "keyboard": None})
 
-    # If splitting failed, fall back to full briefing
+        # Find the end of this section (next header or end of text)
+        next_start = matches[i + 1]['start'] if i + 1 < len(matches) else len(briefing_text)
+        section_content = briefing_text[match['end']:next_start].strip()
+
+        if section_content:
+            # Find first article in this topic from analyzed_articles
+            topic_articles = [a for a in analyzed_articles if any(t in [match['topic'].value] for t in a.topics)]
+            if topic_articles:
+                first_article = topic_articles[0]
+                # Attach keyboard to this section's first article
+                keyboard = build_feedback_keyboard(first_article.article_id, match['topic'].value)
+                messages.append({"text": match['pattern'] + section_content, "keyboard": keyboard})
+            else:
+                # No articles for this topic, no keyboard
+                messages.append({"text": match['pattern'] + section_content, "keyboard": None})
+
+        current_pos = next_start
+
+    # If no messages were created, fall back to full briefing
     if not messages:
         messages = [{"text": briefing_text, "keyboard": None}]
 
@@ -408,7 +431,7 @@ async def deliver_briefing_with_feedback(chat_id: int, briefing_text: str,
                 await bot.send_message(
                     chat_id=chat_id,
                     text=msg["text"],
-                    parse_mode=ParseMode.MARKDOWN_V2,
+                    parse_mode=ParseMode.HTML,
                     reply_markup=msg["keyboard"],
                 )
             else:
@@ -416,7 +439,7 @@ async def deliver_briefing_with_feedback(chat_id: int, briefing_text: str,
                 await bot.send_message(
                     chat_id=chat_id,
                     text=msg["text"],
-                    parse_mode=ParseMode.MARKDOWN_V2,
+                    parse_mode=ParseMode.HTML,
                 )
 
         logger.info("Delivered interactive briefing to chat_id %d", chat_id)
@@ -441,7 +464,7 @@ async def deliver_briefing(chat_id: int, text: str) -> None:
         await bot.send_message(
             chat_id=chat_id,
             text=text,
-            parse_mode=ParseMode.MARKDOWN_V2,
+            parse_mode=ParseMode.HTML,
         )
         logger.info("Delivered briefing to chat_id %d", chat_id)
     except Exception as exc:

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import sys
 from datetime import datetime, timezone
 from typing import Optional
@@ -76,17 +77,32 @@ TOPIC_KEYWORDS: dict[Topic, list[str]] = {
 # Crawler configuration — lightweight mode, no browser
 CRAWLER_TIMEOUT = 10  # seconds per crawl
 
+# Article limits for testing (conservative to stay within daily quotas)
+HACKER_NEWS_MAX_STORIES = int(os.getenv("HACKER_NEWS_MAX_STORIES", "2"))   # Conservative: 2 stories from HN for testing
+ARS_TECHNICA_MAX_ARTICLES = int(os.getenv("ARS_TECHNICA_MAX_ARTICLES", "2"))  # Conservative: 2 articles from Ars for testing
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 
-def _match_topic(text: str) -> list[Topic]:
-    """Return list of topics that match given text (case-insensitive)."""
+def _match_topic(text: str, selected_topics: list[Topic] | None = None) -> list[Topic]:
+    """
+    Return list of topics that match given text (case-insensitive).
+
+    Args:
+        text: Text to match topics against
+        selected_topics: If provided, only match against these specific topics
+                        (None means match against all possible topics)
+    """
     text_lower = text.lower()
     matched: list[Topic] = []
 
-    for topic, keywords in TOPIC_KEYWORDS.items():
+    # If selected_topics is provided, only match against those
+    topics_to_check = selected_topics if selected_topics else TOPIC_KEYWORDS.keys()
+
+    for topic in topics_to_check:
+        keywords = TOPIC_KEYWORDS.get(topic, [])
         for keyword in keywords:
             if keyword.lower() in text_lower:
                 if topic not in matched:
@@ -96,7 +112,7 @@ def _match_topic(text: str) -> list[Topic]:
     return matched
 
 
-async def _fetch_hacker_news() -> list[RawArticle]:
+async def _fetch_hacker_news(selected_topics: list[Topic] | None = None) -> list[RawArticle]:
     """
     Scrape Hacker News front page using crawl4ai.
 
@@ -131,7 +147,7 @@ async def _fetch_hacker_news() -> list[RawArticle]:
         # Find all story rows
         story_rows = soup.find_all('tr', class_='athing')
 
-        for row in story_rows[:20]:  # Limit to top 20 stories
+        for row in story_rows[:HACKER_NEWS_MAX_STORIES]:  # Limit to configured number of stories
             try:
                 # Find title line
                 title_line = row.find('span', class_='titleline')
@@ -171,10 +187,15 @@ async def _fetch_hacker_news() -> list[RawArticle]:
                                 except (ValueError, IndexError):
                                     pass
 
-                # Match topics based on title
-                topics_matched = _match_topic(title)
+                # Match topics based on title (only selected topics)
+                topics_matched = _match_topic(title, selected_topics)
                 if not topics_matched:
-                    topics_matched = [Topic.TECH]  # fallback, analyzer will score relevance
+                    # Only fallback to TECH if user selected TECH or no specific topics provided
+                    if not selected_topics or Topic.TECH in selected_topics:
+                        topics_matched = [Topic.TECH]  # fallback, analyzer will score relevance
+                    else:
+                        # User selected specific topics but none matched - skip this article
+                        continue
 
                 # Create RawArticle with relevance metadata in description
                 relevance_info = f"Points: {points}, Comments: {comments}"
@@ -205,7 +226,7 @@ async def _fetch_hacker_news() -> list[RawArticle]:
         return articles
 
 
-async def _fetch_ars_technica() -> list[RawArticle]:
+async def _fetch_ars_technica(selected_topics: list[Topic] | None = None) -> list[RawArticle]:
     """
     Scrape Ars Technica front page using crawl4ai.
 
@@ -249,13 +270,18 @@ async def _fetch_ars_technica() -> list[RawArticle]:
 
                 articles_found.append((url, title))
 
-        # Limit to top 15 articles
-        for url, title in articles_found[:15]:
+        # Limit to configured number of articles
+        for url, title in articles_found[:ARS_TECHNICA_MAX_ARTICLES]:
             try:
-                # Match topics based on title
-                topics_matched = _match_topic(title)
+                # Match topics based on title (only selected topics)
+                topics_matched = _match_topic(title, selected_topics)
                 if not topics_matched:
-                    topics_matched = [Topic.TECH]  # fallback, analyzer will score relevance
+                    # Only fallback to TECH if user selected TECH or no specific topics provided
+                    if not selected_topics or Topic.TECH in selected_topics:
+                        topics_matched = [Topic.TECH]  # fallback, analyzer will score relevance
+                    else:
+                        # User selected specific topics but none matched - skip this article
+                        continue
 
                 articles.append(
                     RawArticle(
@@ -303,8 +329,8 @@ async def scrape_articles(topics: list[Topic]) -> list[RawArticle]:
         logger.warning("scrape_articles called with empty topic list")
         return []
 
-    # Run both scrapers concurrently
-    tasks = [_fetch_hacker_news(), _fetch_ars_technica()]
+    # Run both scrapers concurrently, passing selected topics
+    tasks = [_fetch_hacker_news(topics), _fetch_ars_technica(topics)]
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
     # Combine results, skipping exceptions (already logged)

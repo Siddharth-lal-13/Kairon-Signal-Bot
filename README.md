@@ -2,66 +2,83 @@
 
 **AI-powered signal briefing bot delivered via Telegram.**
 
-Kairon fetches articles from multiple free news APIs, runs a local LangChain pipeline to extract signal intelligence, synthesizes a daily briefing using a cloud LLM, and delivers it to your Telegram — on a 12-hour schedule orchestrated by n8n.
+Kairon fetches articles from multiple free news APIs, runs a LangGraph-orchestrated pipeline to extract signal intelligence, synthesizes a daily briefing using a cloud LLM, and delivers it to your Telegram on a 12-hour schedule.
 
-> Built by [Siddharth Lal](https://linkedin.com/in/siddharth-lal-606128200) · [Pentaspark](https://github.com/Siddharth-lal-13)
+> Built by [Siddharth Lal](https://linkedin.com/in/siddharth-lal-606128200)
 
 ---
 
 ## What it does
 
-Every 12 hours, n8n triggers the LangGraph multi-agent pipeline:
+Every 12 hours, n8n triggers the pipeline:
 
 ```
-NewsAPI + GNews + HN Scraping + Ars Scraping → LangGraph Pipeline (qwen3.5:4b) → NVIDIA NIM (meta/llama-3.3-70b-instruct) → Telegram
-  [Data Sources]   [Multi-Agent Routing]         [Analyze]           [Synthesize]        [Deliver]
+NewsAPI + GNews + HN + Ars Technica
+         │
+         ▼
+LangGraph Supervisor (Fetcher → Analyzer → Synthesizer)
+         │
+         ▼
+Telegram — analyst-style briefing on AI, Automation, Startups, Tech
 ```
 
-You receive a clean, analyst-style briefing on topics you've chosen: **AI**, **Automation**, **Startups**, **Tech**.
-
-The Telegram bot is two-way — you can update your topic preferences any time without touching config files.
+The pipeline is **supervisor-routed**: after each stage, a conditional edge evaluates data quality and either retries or proceeds — no hardcoded pass-throughs. The Telegram bot is two-way: send `/set ai startups` to change your topics without touching any config file.
 
 ---
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│  n8n (Docker, port 5678)                                    │
-│  12-hour ScheduleTrigger → POST /trigger                    │
-└──────────────────────────┬──────────────────────────────────┘
-                           │
-┌──────────────────────────▼──────────────────────────────────┐
-│  FastAPI (Uvicorn, port 8000)                               │
-│  /trigger  — pipeline entrypoint (background task)          │
-│  /bot      — Telegram webhook receiver                      │
-│  /health   — liveness probe                                 │
-└──────┬───────────────────────────────────────┬──────────────┘
-       │                                       │
-┌──────▼──────────┐                 ┌──────────▼──────────────┐
-│  Agent Pipeline │                 │  Telegram Bot (PTB v21) │
-│                 │                 │                         │
-│  1. Fetcher     │                 │  /start  /topics        │
-│     NewsAPI     │                 │  /set    /status        │
-│     GNews       │                 │  /help                  │
-│                 │                 └─────────────────────────┘
-│  2. Analyzer    │
-│     LangChain   │
-│     LCEL chain  │
-│     qwen2.5:3b  │◄── Ollama (local, host machine)
-│     via Ollama  │
-│                 │
-│  3. Synthesizer │
-│     Llama-3.1   │◄── NVIDIA NIM free API
-│     70B via NIM │
-└──────┬──────────┘
+┌──────────────────────────────────────────────────────────────┐
+│  n8n (Docker, port 5678)                                     │
+│  12-hour ScheduleTrigger → POST /trigger                     │
+└───────────────────────────┬──────────────────────────────────┘
+                            │
+┌───────────────────────────▼──────────────────────────────────┐
+│  FastAPI (Uvicorn, port 8000)                                │
+│  /trigger  — pipeline entrypoint (async background task)     │
+│  /bot      — Telegram webhook receiver                       │
+│  /health   — liveness probe                                  │
+└──────┬────────────────────────────────────────┬──────────────┘
+       │                                        │
+┌──────▼───────────────┐            ┌───────────▼─────────────┐
+│  LangGraph Pipeline  │            │  Telegram Bot (PTB v21) │
+│                      │            │                         │
+│  fetch_node          │            │  /start  /topics        │
+│  ├─ NewsAPI          │            │  /set    /status        │
+│  └─ GNews            │            │  /help                  │
+│  ├─ HN scraper       │            │                         │
+│  └─ Ars scraper      │            │  Inline feedback        │
+│                      │            │  👍 👎 🔍               │
+│  ── quality gate ──  │            └─────────────────────────┘
+│                      │
+│  analyze_node        │
+│  LangChain LCEL      │◄── Local LLM via Ollama
+│  Structured output   │
+│                      │
+│  ── quality gate ──  │
+│                      │
+│  synthesize_node     │◄── Cloud LLM (free tier)
+│  Final briefing      │
+└──────┬───────────────┘
        │
-┌──────▼──────────┐
-│  Storage        │
-│  preferences    │  flat JSON (Stage 1)
-│  delivery_log   │  flat JSON (Stage 1)
-└─────────────────┘
+┌──────▼───────────┐
+│  Storage         │
+│  preferences     │  flat JSON
+│  delivery_log    │  flat JSON
+│  feedback_log    │  flat JSON
+└──────────────────┘
 ```
+
+### Design decisions worth noting
+
+- Cost-Optimized Dual-LLM: A small local model (Ollama) handles per-article structured extraction in parallel (keeping high-volume analysis free), while the cloud model (Llama-3.3-70b via NIM) only runs once for final synthesis where reasoning actually matters.
+
+- Self-Healing Supervisor Pattern: The LangGraph pipeline uses conditional routing rather than hardcoded pass-throughs. If the fetch stage returns low-quality data, the supervisor evaluates the quality gate and automatically triggers retries with adjusted parameters, ensuring the pipeline degrades gracefully.
+
+- Hybrid Data Sourcing: APIs (NewsAPI, GNews) provide structured metadata, while concurrent web scrapers (crawl4ai) pull engagement signals from Hacker News and Ars Technica. The pipeline handles intelligent deduplication and merging across all sources.
+
+---
 
 ### Tech stack
 
@@ -69,30 +86,25 @@ The Telegram bot is two-way — you can update your topic preferences any time w
 |-----------|-----------|-------|
 | Orchestration | n8n (self-hosted Docker) | 12-hour cron, importable `workflow.json` |
 | News sources | NewsAPI + GNews | Free tiers stacked for volume |
-| Multi-Agent Routing | LangGraph 0.2+ | Supervisor pattern with retry routing |
-| Web Scraping | crawl4ai + BeautifulSoup | Hacker News + Ars Technica scrapers |
-| Analysis LLM | qwen3.5:4b via Ollama | Local inference, 4GB VRAM safe |
-| Synthesis LLM | meta/llama-3.3-70b-instruct via NVIDIA NIM | Free API tier |
-| Bot delivery | python-telegram-bot v21 | Two-way interaction |
-| API layer | FastAPI + Uvicorn | Webhook bridge for n8n + Telegram |
+| Web Scraping | crawl4ai + BeautifulSoup | Hacker News + Ars Technica |
+| Pipeline | LangGraph 0.2+ | Supervisor pattern, conditional retry edges |
+| Analysis LLM | Ollama (local) | Structured extraction, parallel calls |
+| Synthesis LLM | Cloud API (free tier) | Final briefing generation |
+| Bot | python-telegram-bot v21 | Two-way, inline callbacks |
+| API layer | FastAPI + Uvicorn | Webhook bridge |
 | Data models | Pydantic v2 | End-to-end type safety |
-| Storage | JSON flat files (Stage 1) | PostgreSQL + MemPalace in Stage 2 |
-| Containerisation | Docker + Docker Compose | Single `docker compose up` |
+| Storage | JSON flat files | See Stage 2 roadmap |
+| Containerisation | Docker + Docker Compose | `docker compose up` |
 
 ---
 
 ## Prerequisites
 
 - **Python 3.11+**
-- **Docker Desktop** (for n8n + Kairon API)
-- **Ollama** installed on your host machine with `qwen2.5:3b` pulled
-
-```bash
-ollama pull qwen2.5:3b
-```
-
-- Free API keys for: [NewsAPI](https://newsapi.org/register), [GNews](https://gnews.io/), [NVIDIA NIM](https://build.nvidia.com/)
-- A Telegram bot token from [@BotFather](https://t.me/BotFather)
+- **Docker Desktop**
+- **Ollama** installed on the host machine with a small model pulled (see `.env.example` for model name)
+- Free API keys: [NewsAPI](https://newsapi.org/register), [GNews](https://gnews.io/), cloud LLM provider of choice
+- Telegram bot token from [@BotFather](https://t.me/BotFather)
 
 ---
 
@@ -105,7 +117,7 @@ cd kairon
 
 # 2. Set up environment
 cp .env.example .env
-# Edit .env and fill in all API keys
+# Fill in API keys
 
 # 3. Create storage files
 mkdir -p storage
@@ -116,50 +128,30 @@ echo '[]' > storage/feedback_log.json
 # 4. Start services
 docker compose up -d
 
-# 5. Import the n8n workflow (optional - can trigger manually too)
-# Open http://localhost:5678, log in (admin / changeme),
-# go to Workflows → Import → select n8n/workflow.json
+# 5. Import n8n workflow
+# Open http://localhost:5678 → Workflows → Import → n8n/workflow.json
 # Activate the workflow.
 
-# 6. Test the bot
-# Open Telegram, find your bot, send /start
+# 6. Test
+# Find your bot on Telegram, send /start
 ```
 
-## 📱 Live Demo
-
-**Try the bot on Telegram:** Find your bot and send `/start`
-
-### Portfolio Demonstration Strategy
-
-**Option 1: Full Automation (Recommended)**
-- Start Docker with `docker compose up -d`
-- Import n8n workflow for automated 12-hour delivery
-- Demonstrates: scheduling, automation, production readiness
-
-**Option 2: Manual Triggering (For Development)**
-- Start API only: `docker compose up -d kairon-api`
-- Trigger briefings manually with curl commands
-- Demonstrates: API architecture, debugging capabilities
-
-**Both modes work together** - this flexibility shows understanding of different deployment paradigms and production requirements.
-
-### Development mode (no Docker)
+### Manual trigger (skip n8n)
 
 ```bash
-# Install dependencies
-pip install -r requirements.txt
-
-# Run the API server
-uvicorn api.webhook:app --reload --port 8000
-
-# In a separate terminal, run the bot in polling mode
-python -m bot.telegram_bot
-
-# Trigger the pipeline manually (skip n8n)
 curl -X POST http://localhost:8000/trigger \
   -H "Content-Type: application/json" \
   -H "X-N8n-Secret: your_n8n_trigger_secret" \
   -d '{"run_id": "test-001", "triggered_at": "2025-01-01T07:00:00Z", "target_user_id": YOUR_CHAT_ID}'
+```
+
+### Development mode (no Docker)
+
+```bash
+pip install -r requirements.txt
+uvicorn api.webhook:app --reload --port 8000
+# In a second terminal:
+python -m bot.telegram_bot
 ```
 
 ---
@@ -168,26 +160,15 @@ curl -X POST http://localhost:8000/trigger \
 
 | Command | Description |
 |---------|-------------|
-| `/start` | Register and receive your first briefing setup |
-| `/topics` | Show your current topic subscriptions |
+| `/start` | Register and receive briefing setup |
+| `/topics` | Show current subscriptions |
 | `/set ai automation` | Update subscriptions (space-separated) |
 | `/status` | Full preference summary |
 | `/help` | Command reference |
 
 Available topics: `ai` `automation` `startups` `tech`
 
-### Two-way interaction
-
-The Telegram bot includes inline buttons for user feedback on each article in your briefing:
-
-- **👍 Upvote**: Mark articles as high-signal (affects future personalization)
-- **👎 Downvote**: Mark articles as low-signal (affects future personalization)
-- **🔍 Deep Dive**: Request detailed analysis of specific articles
-
-Feedback is stored in `storage/feedback_log.json` and used to personalize future briefings by:
-- Weighting coverage toward upvoted signal types and entities
-- Minimizing coverage of downvoted signal types
-- Improving relevance scoring for articles matching your preferences
+Each briefing includes inline 👍 / 👎 feedback buttons. Upvotes and downvotes adjust signal-type and entity weights for future briefings, stored in `feedback_log.json`.
 
 ---
 
@@ -196,209 +177,84 @@ Feedback is stored in `storage/feedback_log.json` and used to personalize future
 ```
 kairon/
 ├── agents/
-│   ├── fetcher.py          # NewsAPI + GNews fetcher (async, deduped)
-│   ├── scraper.py          # Hacker News + Ars Technica scraper (crawl4ai)
-│   ├── analyzer.py         # LangChain LCEL chain → qwen3.5:4b/Ollama
-│   ├── pipeline.py          # LangGraph supervisor pattern (multi-agent routing)
-│   └── synthesizer.py      # NVIDIA NIM synthesis agent
+│   ├── fetcher.py       # Async news fetcher — NewsAPI + GNews, deduped
+│   ├── scraper.py       # crawl4ai scraper — Hacker News + Ars Technica
+│   ├── analyzer.py      # LangChain LCEL → local LLM, structured extraction
+│   ├── pipeline.py      # LangGraph graph — supervisor + conditional edges
+│   └── synthesizer.py   # Cloud LLM synthesis
 ├── bot/
-│   └── telegram_bot.py     # python-telegram-bot v21 (two-way)
+│   └── telegram_bot.py  # PTB v21, two-way, inline callbacks
 ├── api/
-│   └── webhook.py          # FastAPI — /trigger + /bot + /health
+│   └── webhook.py       # FastAPI — /trigger /bot /health
 ├── models/
-│   └── schemas.py          # Pydantic v2 data models
+│   └── schemas.py       # Pydantic v2 models
 ├── storage/
-│   ├── store.py            # Flat-file storage layer (Stage 1)
-│   ├── preferences.json    # User topic preferences (git-ignored)
-│   ├── delivery_log.json   # Delivery audit trail (git-ignored)
-│   └── feedback_log.json   # User feedback for personalization (git-ignored)
+│   └── store.py         # Flat-file storage layer
 ├── n8n/
-│   └── workflow.json       # Importable n8n workflow
+│   └── workflow.json    # Importable n8n workflow
 ├── .env.example
-├── .gitignore
 ├── docker-compose.yml
 ├── Dockerfile
-├── requirements.txt
-└── README.md
+└── requirements.txt
 ```
+
+> **Note:** Core agent implementation files are not public to protect the commercial roadmap. The architecture, schemas, API layer, and n8n workflow are fully available. Screenshots below show the system running end-to-end.
+
+---
+
+## Screenshots
+
+![n8n_workflow](./assets/n8n_workflow.png)
+![kairon_chat_1](./assets/kairon_chat_1.jpeg)
+![kairon_chat_2](./assets/kairon_chat_2.jpeg)
+![kairon_chat_3](./assets/kairon_chat_3.jpeg)
+![kairon_chat_4](./assets/kairon_chat_4.jpeg)
+![kairon_chat_5](./assets/kairon_chat_5.jpeg)
 
 ---
 
 ## Configuration
 
-All configuration is via environment variables. See `.env.example` for the full reference.
-
-Key variables:
+All configuration via environment variables. See `.env.example`.
 
 | Variable | Description |
 |----------|-------------|
-| `NEWSAPI_KEY` | NewsAPI free tier key |
-| `GNEWS_KEY` | GNews free tier key |
-| `TELEGRAM_BOT_TOKEN` | Bot token from @BotFather |
-| `NIM_API_KEY` | NVIDIA NIM free API key |
-| `OLLAMA_MODEL` | Local model name (default: `qwen2.5:3b`) |
-| `MAX_CONCURRENT_LLM` | Parallel Ollama calls (default: `2`, safe for 4GB VRAM) |
-| `RELEVANCE_THRESHOLD` | Articles below this score are dropped (default: `0.4`) |
+| `NEWSAPI_KEY` | NewsAPI free tier |
+| `GNEWS_KEY` | GNews free tier |
+| `TELEGRAM_BOT_TOKEN` | From @BotFather |
+| `OLLAMA_MODEL` | Local model name |
+| `OLLAMA_BASE_URL` | Ollama endpoint (default: `http://host.docker.internal:11434`) |
+| `MAX_CONCURRENT_LLM` | Parallel analysis calls (default: `2`) |
+| `RELEVANCE_THRESHOLD` | Drop articles below this score (default: `0.4`) |
 | `N8N_TRIGGER_SECRET` | Shared secret between n8n and FastAPI |
-
----
-
-## Data Sources
-
-Kairon uses a hybrid approach for maximum signal coverage:
-
-### API-Based Sources (Primary)
-- **NewsAPI**: Aggregates articles from thousands of sources
-- **GNews**: Tech-focused news aggregation
-
-### Web Scraping (Supplemental)
-- **Hacker News**: Front page stories with engagement metrics (points, comment count)
-- **Ars Technica**: Deep tech journalism and analysis
-
-### Why Both?
-APIs provide structured metadata and reliability. Scrapers provide fresh content and engagement signals. The system merges both sources, deduplicates by URL, and delivers the best of both worlds.
 
 ---
 
 ## n8n workflow
 
-The `n8n/workflow.json` can be imported directly into any n8n instance.
+`n8n/workflow.json` is directly importable.
 
-**What it does:**
-1. Fires every 12 hours via ScheduleTrigger
-2. Builds a trigger payload with a unique `run_id`
-3. POSTs to `http://kairon-api:8000/trigger` with `X-N8n-Secret` header
-4. Checks the response and logs success or failure
+What it does: fires every 12 hours → builds a `run_id` payload → POSTs to `/trigger` with the shared secret → logs success or failure.
 
-**To import:**
-n8n UI → Workflows → ··· → Import from file → select `n8n/workflow.json`
-
-**Environment variables n8n needs** (set in docker-compose.yml):
-- `KAIRON_API_URL` — `http://kairon-api:8000`
-- `N8N_TRIGGER_SECRET` — must match the FastAPI env var
-
-## 📊 Portfolio Showcase
-
-### System Capabilities Demonstrated
-
-**Multi-Agent Architecture:**
-- ✅ **Supervisor Pattern**: LangGraph routing with intelligent retry logic
-- ✅ **Independent Agent Decisions**: Each node makes data-quality assessments
-- ✅ **Self-Healing Pipeline**: Recovers from transient failures automatically
-- ✅ **Production-Ready Design**: Error handling, logging, type safety throughout
-
-**Data Source Integration:**
-- ✅ **Four Sources**: NewsAPI, GNews, Hacker News, Ars Technica
-- ✅ **Concurrent Fetching**: Parallel API calls and web scraping
-- ✅ **Intelligent Merging**: Deduplication by URL with source tracking
-- ✅ **Quality Filtering**: Relevance scoring with LLM analysis
-
-**User Experience & Personalization:**
-- ✅ **Two-Way Interaction**: Telegram bot with inline feedback buttons
-- ✅ **Smart Learning**: System learns from user upvotes/downvotes
-- ✅ **Preference Management**: Users can update topics anytime
-- ✅ **Feedback System**: Records interactions for future personalization
-
-**Production Infrastructure:**
-- ✅ **Containerized Deployment**: Docker Compose with networking
-- ✅ **FastAPI Layer**: Webhook bridge for n8n + Telegram
-- ✅ **Automation Integration**: n8n workflow for 12-hour scheduling
-- ✅ **Multi-Modal Operation**: Supports automated and manual triggering
-- ✅ **Monitoring**: Health checks, logging, error tracking
-
-### Deployment Modes Demonstrated
-
-**1. Automated Production Mode (Docker + n8n):**
-- Full 12-hour automated delivery
-- n8n workflow orchestration
-- Self-healing with retry logic
-- Production-ready error handling
-
-**2. Manual Triggering Mode (Docker + API):**
-- Flexible manual triggering via API
-- Perfect for development and testing
-- Demonstrates clean API architecture
-
-**3. Development Mode (Local):**
-- Direct bot execution for debugging
-- Individual agent testing
-- Rapid development cycle
-
-### Technical Skills Demonstrated
-
-**Backend Engineering:**
-- Async/await patterns for concurrent operations
-- LangGraph state machine implementation
-- Pydantic v2 data models and validation
-- FastAPI with background tasks
-- Thread-safe file operations with filelocks
-
-**AI/ML Integration:**
-- Local LLM integration (Ollama with qwen3.5:4b)
-- Cloud LLM integration (NVIDIA NIM with Llama-3.1-70b)
-- LangChain LCEL chains for structured output
-- JSON parsing and error handling
-- Model selection and parameter tuning
-
-**System Architecture:**
-- Multi-agent supervisor pattern
-- State management and data flow
-- Error handling and retry logic
-- API integration and rate limiting
-- Web scraping with crawl4ai
-
-**DevOps & Deployment:**
-- Docker containerization
-- Docker Compose orchestration
-- Service networking and communication
-- Environment variable management
-- Health checks and monitoring
-- n8n workflow integration
-
-The `n8n/workflow.json` can be imported directly into any n8n instance.
-
-**What it does:**
-1. Fires every 12 hours via ScheduleTrigger
-2. Builds a trigger payload with a unique `run_id`
-3. POSTs to `http://kairon-api:8000/trigger` with the `X-N8n-Secret` header
-4. Checks the response and logs success or failure
-
-**To import:**  
-n8n UI → Workflows → ··· → Import from file → select `n8n/workflow.json`
-
-**Environment variables n8n needs** (set in docker-compose.yml):
-- `KAIRON_API_URL` — `http://kairon-api:8000`
-- `N8N_TRIGGER_SECRET` — must match the FastAPI env var
+Import: n8n UI → Workflows → ··· → Import from file → `n8n/workflow.json`
 
 ---
 
-## Stage 2 roadmap
+## Roadmap
 
-Stage 2 (Pentaspark commercial product) will add:
-
-- **MemPalace** persistent memory — per-user wing/room structure for cross-session personalization (feedback system already implemented in Stage 1)
-- **PostgreSQL** replacing flat JSON storage
-- **Multi-user subscription system** with Telegram payment API
-- **Real-time alerts** for high-signal breaking news
-- **Deep trend analysis** across sessions
-- **Additional signal sources** (RSS, job boards, GitHub trending)
-
-Stage 2 hooks are already present in the codebase: `mempalace_wing` fields in `UserPreferences` and `Briefing`, commented-out deps in `requirements.txt`.
+See [STAGE2.md](STAGE2.md) for the planned commercial evolution of Kairon.
 
 ---
 
 ## License
 
-Creative Commons Attribution-NonCommercial 4.0 International (CC BY-NC 4.0).
+[PolyForm Noncommercial 1.0](LICENSE)
 
-You may use, share, and adapt this project for non-commercial purposes with attribution.  
-Commercial use requires written permission from the author.
-
-See [LICENSE](LICENSE) for full terms.
+Free to use, study, and modify for non-commercial purposes with attribution. Commercial use requires written permission from the author.
 
 ---
 
 ## Author
 
-**Siddharth Lal** — Python backend and automation engineer  
+**Siddharth Lal** — Python backend, AI, data and automation engineer  
 [GitHub](https://github.com/Siddharth-lal-13) · [LinkedIn](https://linkedin.com/in/siddharth-lal-606128200)

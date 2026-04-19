@@ -10,6 +10,7 @@ services:
       - "8000:8000"
     volumes:
       - ./storage:/app/storage          # flat-file persistence
+      #- ./:/app                         # 👈 THE HOLE: Live source code mount
     environment:
       - NEWSAPI_KEY=${NEWSAPI_KEY}
       - GNEWS_KEY=${GNEWS_KEY}
@@ -20,11 +21,17 @@ services:
       - NIM_BASE_URL=${NIM_BASE_URL}
       - NIM_MODEL=${NIM_MODEL}
       - NIM_MAX_TOKENS=${NIM_MAX_TOKENS}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}   # OpenRouter for analyzer
+      - OPENROUTER_BASE_URL=${OPENROUTER_BASE_URL}
       - OLLAMA_BASE_URL=http://host.docker.internal:11434   # Ollama runs on host
       - OLLAMA_MODEL=${OLLAMA_MODEL}
       - N8N_TRIGGER_SECRET=${N8N_TRIGGER_SECRET}
-      - MAX_CONCURRENT_LLM=${MAX_CONCURRENT_LLM:-2}
-      - RELEVANCE_THRESHOLD=${RELEVANCE_THRESHOLD:-0.4}
+      - MAX_CONCURRENT_LLM=${MAX_CONCURRENT_LLM:-1}    # SEQUENTIAL: 1 call at a time for OpenRouter rate limits
+      - RELEVANCE_THRESHOLD=${RELEVANCE_THRESHOLD:-0.1}   # Very low threshold for testing
+      - NEWSAPI_PAGE_SIZE=${NEWSAPI_PAGE_SIZE:-2}      # Conservative article limits for testing
+      - GNEWS_MAX_RESULTS=${GNEWS_MAX_RESULTS:-1}      # Conservative article limits for testing
+      - HACKER_NEWS_MAX_STORIES=${HACKER_NEWS_MAX_STORIES:-1}    # Conservative scraper limits for testing
+      - ARS_TECHNICA_MAX_ARTICLES=${ARS_TECHNICA_MAX_ARTICLES:-1}  # Conservative scraper limits for testing
       - STORAGE_DIR=/app/storage
     networks:
       - kairon-net
@@ -32,6 +39,27 @@ services:
     # On Linux, add: extra_hosts: ["host.docker.internal:host-gateway"]
     extra_hosts:
       - "host.docker.internal:host-gateway"
+
+  # ── Kairon Telegram Bot (Polling Mode for Development) ───────────────────
+  kairon-bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: kairon-bot
+    restart: unless-stopped
+    volumes:
+      - ./storage:/app/storage          # shared storage with API
+    environment:
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - BOT_WEBHOOK_URL=                # Force polling mode (empty)
+      - BOT_WEBHOOK_SECRET=${BOT_WEBHOOK_SECRET}
+      - STORAGE_DIR=/app/storage
+      - PYTHONPATH=/app
+    command: python bot/telegram_bot.py
+    networks:
+      - kairon-net
+    depends_on:
+      - kairon-api
 
   # ── n8n workflow orchestrator ───────────────────────────────────────────
   n8n:

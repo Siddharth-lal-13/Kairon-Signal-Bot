@@ -19,6 +19,9 @@ Run locally:
 
 from __future__ import annotations
 
+# DEBUGGING FIX: Add global pipeline lock to prevent overlapping webhook requests
+IS_PIPELINE_RUNNING = False
+
 import hashlib
 import logging
 import os
@@ -65,6 +68,18 @@ async def lifespan(app: FastAPI):
     logger.info("PTB application shut down")
 
 
+# Configure Python logging to ensure all output is visible
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
+    handlers=[logging.StreamHandler()]
+)
+
+# Explicitly set agent modules to INFO level so they're not filtered
+for module in ["agents.pipeline", "agents.analyzer", "agents.synthesizer",
+               "agents.fetcher", "agents.scraper"]:
+    logging.getLogger(module).setLevel(logging.INFO)
+
 app = FastAPI(
     title="Kairon API",
     description="Webhook layer for n8n orchestration and Telegram bot",
@@ -85,7 +100,7 @@ async def _run_pipeline_for_user(user_id: int, topics: list, run_id: str) -> Non
     try:
         # Use new LangGraph pipeline instead of separate agent calls
         briefing, analyzed_articles = await run_pipeline(user_id, topics)
-        await deliver_briefing_with_feedback(user_id, briefing, analyzed_articles)
+        await deliver_briefing_with_feedback(user_id, briefing.telegram_text, analyzed_articles)
 
         append_delivery_record(
             DeliveryRecord(
@@ -132,8 +147,17 @@ async def _run_pipeline(payload: TriggerPayload) -> None:
         "Pipeline run %s: processing %d user(s)", payload.run_id, len(all_prefs)
     )
 
-    for prefs in all_prefs:
-        await _run_pipeline_for_user(prefs.user_id, prefs.topics, payload.run_id)
+    try:
+        for prefs in all_prefs:
+            await _run_pipeline_for_user(prefs.user_id, prefs.topics, payload.run_id)
+    except Exception as exc:
+        logger.exception("Pipeline crashed silently: %s", exc)
+        logger.error("Full pipeline execution failed for run %s: %s", payload.run_id, exc)
+    finally:
+        # DEBUGGING FIX: Reset pipeline lock when complete
+        global IS_PIPELINE_RUNNING
+        IS_PIPELINE_RUNNING = False
+        logger.info(f"Pipeline lock released (run_id: {payload.run_id})")
 
 
 # ---------------------------------------------------------------------------
@@ -156,7 +180,7 @@ async def trigger(
     Called by n8n cron workflow.  Accepts immediately and runs pipeline
     in the background.
 
-    Header: X-N8n-Secret — must match N8N_TRIGGER_SECRET env var.
+    Header: X-N8n-Secret - must match N8N_TRIGGER_SECRET env var.
     """
     # TEMPORARY: Comment out webhook validation for testing pipeline functionality
     # TODO: Re-enable strict validation after successful end-to-end testing
@@ -164,12 +188,24 @@ async def trigger(
     #     raise HTTPException(status_code=403, detail="Invalid n8n secret")
     logger.info(f"Bypassed webhook validation for testing (run_id: {payload.run_id})")
 
+    # DEBUGGING FIX: Pipeline lock to prevent overlapping webhook requests
+    global IS_PIPELINE_RUNNING
+    if IS_PIPELINE_RUNNING:
+        logger.warning(f"Pipeline already running, rejecting trigger (run_id: {payload.run_id})")
+        return TriggerResponse(
+            run_id=payload.run_id,
+            accepted=False,
+            queued_users=0,
+            message="Pipeline already running. Try again later."
+        )
+
     all_prefs = load_all_preferences()
     if payload.target_user_id is not None:
         queued = 1
     else:
         queued = len(all_prefs)
 
+    IS_PIPELINE_RUNNING = True
     background_tasks.add_task(_run_pipeline, payload)
 
     return TriggerResponse(
