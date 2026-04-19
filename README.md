@@ -120,8 +120,8 @@ The pipeline is **supervisor-routed**: after each stage, a conditional edge eval
 
 ```bash
 # 1. Clone
-git clone https://github.com/Siddharth-lal-13/kairon.git
-cd kairon
+git clone https://github.com/Siddharth-lal-13/Kairon-Signal-Bot.git
+cd Kairon-Signal-Bot
 
 # 2. Set up environment
 cp .env.example .env
@@ -183,7 +183,7 @@ Each briefing includes inline 👍 / 👎 feedback buttons. Upvotes and downvote
 ## Project structure
 
 ```
-kairon/
+Kairon-Signal_Bot/
 ├── agents/
 │   ├── fetcher.py       # Async news fetcher — NewsAPI + GNews, deduped
 │   ├── scraper.py       # crawl4ai scraper — Hacker News + Ars Technica
@@ -252,7 +252,7 @@ Import: n8n UI → Workflows → ··· → Import from file → `n8n/workflow.j
 
 ## Roadmap
 
-See [STAGE2.md](STAGE2.md) for the planned commercial evolution of Kairon.
+See [STAGE2.md](STAGE2.md) for the planned commercial evolution of Kairon Signal Bot.
 
 ---
 
