@@ -183,7 +183,7 @@ Each briefing includes inline 👍 / 👎 feedback buttons. Upvotes and downvote
 ## Project structure
 
 ```
-Kairon-Signal_Bot/
+Kairon-Signal-Bot/
 ├── agents/
 │   ├── fetcher.py       # Async news fetcher — NewsAPI + GNews, deduped
 │   ├── scraper.py       # crawl4ai scraper — Hacker News + Ars Technica
